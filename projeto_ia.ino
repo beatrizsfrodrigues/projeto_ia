@@ -6,17 +6,22 @@
 #define NUM_LEDS    (LED_WIDTH * LED_HEIGHT)
 #define COLOR_ORDER GRB
 #define CHIPSET     WS2812B
-#define BRIGHTNESS  30
+#define BRIGHTNESS  10
 
 #define LED_PIN2     10
 
-const int JOY_X = A0;
-const int JOY_Y = A1;
+const int JOY_X = A1;
+const int JOY_Y = A0;
 const int JOY_X2 = A2;
 const int JOY_Y2 = A3;
 const int JOY_THRESHOLD = 400;  // deadzone threshold
 
-const int segmentPins[7] = {1,2,3,4,5,6,7}; // a to g
+unsigned long lastMoveTime1 = 0;
+unsigned long lastMoveTime2 = 0;
+const unsigned long moveDelay = 100; // milliseconds between moves
+
+
+
 
 
 CRGB leds[NUM_LEDS];
@@ -29,18 +34,12 @@ const int BTN_START = 9;
 const int NUM_MAZES = 6;
 int currentMaze1 = 0;
 int currentMaze2 = 0;
+// int currentMaze1 = 6;
+// int currentMaze2 = 6;
 bool gameOver = false;
 bool gameStarted = false;
 
-// Segment order: a, b, c, d, e, f, g
-const byte digits[7][7] PROGMEM = {
-  {1,1,1,1,1,1,0}, // 0
-  {0,1,1,0,0,0,0}, // 1
-  {1,1,0,1,1,0,1}, // 2
-  {1,1,1,1,0,0,1}, // 3
-  {0,1,1,0,0,1,1}, // 4
-  {1,0,1,1,0,1,1}, // 5
-};
+
 
 
 
@@ -166,6 +165,8 @@ int startPositions[NUM_MAZES][2] = {
 
 int playerX = startPositions[0][0];
 int playerY = startPositions[0][1];
+// int playerX = startPositions[5][0];
+// int playerY = startPositions[5][1];
 int playerX2 = startPositions[0][0];
 int playerY2 = startPositions[0][1];
 
@@ -194,19 +195,9 @@ void setup() {
 
   pinMode(BTN_START, INPUT_PULLUP);
 
-  for (int i = 0; i < 7; i++) {
-  pinMode(segmentPins[i], OUTPUT);
-}
-
 }
 
 void desenharLabirinto();
-
-void displayDigit(int digit) {
-  for (int i = 0; i < 7; i++) {
-    digitalWrite(segmentPins[i], digits[digit][i]);
-  }
-}
 
 
 
@@ -218,6 +209,8 @@ void loop() {
       gameOver = false;
       currentMaze1 = 0;
       currentMaze2 = 0;
+      // currentMaze1 = 6;
+      // currentMaze2 = 6;
       playerX = startPositions[0][0];
       playerY = startPositions[0][1];
       playerX2 = startPositions[0][0];
@@ -228,29 +221,40 @@ void loop() {
   }
 
   if (!gameOver) {
-    if (currentMaze1 < NUM_MAZES) moverJogador();
-    if (currentMaze2 < NUM_MAZES) moverJogador2();
+  if (currentMaze1 < NUM_MAZES) moverJogador();
+  if (currentMaze2 < NUM_MAZES) moverJogador2();
 
-    desenharLabirinto();    // Player 1
-    desenharLabirinto2();   // Player 2
+  desenharLabirinto();    
+  desenharLabirinto2();   
+  FastLED.show();
 
-    FastLED.show(); 
+  if (currentMaze1 >= NUM_MAZES || currentMaze2 >= NUM_MAZES) {
+    gameOver = true;
 
-    // Check for win
+    // Display animations based on who won
     if (currentMaze1 >= NUM_MAZES) {
       Serial.println("🏁 Player 1 wins!");
-      gameOver = true;
+      dualWinAnimation(leds, leds2);
     } else if (currentMaze2 >= NUM_MAZES) {
       Serial.println("🏁 Player 2 wins!");
-      gameOver = true;
+      dualWinAnimation(leds2, leds);
     }
-  } else {
+
+
+
+    // Clear LEDs after animation
+    FastLED.clear();
+    FastLED.show();
+
+    gameStarted = false;
+  }
+} else {
     FastLED.clear();
     FastLED.show();
     delay(1000);
   }
 
-  displayDigit(NUM_MAZES - max(currentMaze1, currentMaze2));
+
   delay(200);
 }
 
@@ -258,76 +262,100 @@ void loop() {
 
 
 void moverJogador() {
+  if (millis() - lastMoveTime1 < moveDelay) return; // wait before allowing next move
+
   int novoX = playerX;
   int novoY = playerY;
 
   int xVal = analogRead(JOY_X);
   int yVal = analogRead(JOY_Y);
 
-  // Prioritize vertical movement
+  bool moved = false;
+
   if (yVal < 512 - JOY_THRESHOLD) {
-    novoY--;  // up
-    Serial.println("UP");
+    novoY++;
+    moved = true;
   } else if (yVal > 512 + JOY_THRESHOLD) {
-    novoY++;  // down
-    Serial.println("DOWN");
+    novoY--;
+    moved = true;
   } else if (xVal < 512 - JOY_THRESHOLD) {
-    novoX--;  // left
-    Serial.println("LEFT");
+    novoX--;
+    moved = true;
   } else if (xVal > 512 + JOY_THRESHOLD) {
-    novoX++;  // right
-    Serial.println("RIGHT");
+    novoX++;
+    moved = true;
   }
 
-  // Ensure the new position is within bounds
-  if (novoX >= 0 && novoX < LED_WIDTH && novoY >= 0 && novoY < LED_HEIGHT) {
-    if (mazes[currentMaze1][novoY][novoX] != 1) {
-      playerX = novoX;
-      playerY = novoY;
-    }
-  }
+  if (moved) {
+    lastMoveTime1 = millis();  // reset timer only on attempted move
 
-  // Check if player reached the goal
-  if (mazes[currentMaze1][playerY][playerX] == 2) {
-    Serial.println("Player 1 reached the goal!");
-    currentMaze1++;
-    if (currentMaze1 < NUM_MAZES) {
-      playerX = startPositions[currentMaze1][0];
-      playerY = startPositions[currentMaze1][1];
+    if (novoX >= 0 && novoX < LED_WIDTH && novoY >= 0 && novoY < LED_HEIGHT) {
+      if (pgm_read_byte(&(mazes[currentMaze1][novoY][novoX])) != 1) {
+        playerX = novoX;
+        playerY = novoY;
+      }
     }
-    delay(500);
+
+    if (pgm_read_byte(&(mazes[currentMaze1][playerY][playerX])) == 2) {
+      Serial.println("Player 1 reached the goal!");
+      currentMaze1++;
+      if (currentMaze1 < NUM_MAZES) {
+        playerX = startPositions[currentMaze1][0];
+        playerY = startPositions[currentMaze1][1];
+      }
+      delay(500);
+    }
   }
 }
 
+
 void moverJogador2() {
+  if (millis() - lastMoveTime2 < moveDelay) return;
+
   int novoX = playerX2;
   int novoY = playerY2;
 
   int xVal = analogRead(JOY_X2);
   int yVal = analogRead(JOY_Y2);
 
-  if (yVal < 512 - JOY_THRESHOLD) novoY--; // up
-  else if (yVal > 512 + JOY_THRESHOLD) novoY++; // down
-  else if (xVal < 512 - JOY_THRESHOLD) novoX--; // left
-  else if (xVal > 512 + JOY_THRESHOLD) novoX++; // right
+  bool moved = false;
 
-  if (novoX >= 0 && novoX < LED_WIDTH && novoY >= 0 && novoY < LED_HEIGHT) {
-    if (mazes[currentMaze2][novoY][novoX] != 1) {
-      playerX2 = novoX;
-      playerY2 = novoY;
-    }
+  if (yVal < 512 - JOY_THRESHOLD) {
+    novoY++;
+    moved = true;
+  } else if (yVal > 512 + JOY_THRESHOLD) {
+    novoY--;
+    moved = true;
+  } else if (xVal < 512 - JOY_THRESHOLD) {
+    novoX--;
+    moved = true;
+  } else if (xVal > 512 + JOY_THRESHOLD) {
+    novoX++;
+    moved = true;
   }
 
-  if (mazes[currentMaze2][playerY2][playerX2] == 2) {
-    Serial.println("Player 2 reached the goal!");
-    currentMaze2++;
-    if (currentMaze2 < NUM_MAZES) {
-      playerX2 = startPositions[currentMaze2][0];
-      playerY2 = startPositions[currentMaze2][1];
+  if (moved) {
+    lastMoveTime2 = millis();
+
+    if (novoX >= 0 && novoX < LED_WIDTH && novoY >= 0 && novoY < LED_HEIGHT) {
+      if (pgm_read_byte(&(mazes[currentMaze2][novoY][novoX])) != 1) {
+        playerX2 = novoX;
+        playerY2 = novoY;
+      }
     }
-    delay(500);
+
+    if (pgm_read_byte(&(mazes[currentMaze2][playerY2][playerX2])) == 2) {
+      Serial.println("Player 2 reached the goal!");
+      currentMaze2++;
+      if (currentMaze2 < NUM_MAZES) {
+        playerX2 = startPositions[currentMaze2][0];
+        playerY2 = startPositions[currentMaze2][1];
+      }
+      delay(500);
+    }
   }
 }
+
 
 
 void desenharLabirinto() {
@@ -367,3 +395,60 @@ void desenharLabirinto2() {
   }
 
 }
+
+void dualWinAnimation(CRGB* leds1, CRGB* leds2) {
+  for (int t = 0; t < 60; t++) {  // Runs for ~3 seconds
+
+    uint8_t baseHue = t * 8;
+
+    // === Rainbow animation for leds1 ===
+    fill_rainbow(leds1, NUM_LEDS, baseHue, 10);
+    for (int i = 0; i < NUM_LEDS; i++) {
+      if (random8() < 40) {
+        leds1[i] = CHSV(random8(), 255, 255);
+      } else {
+        leds1[i].fadeToBlackBy(random8(10, 40));
+      }
+    }
+
+    // === Red flashing animation for leds2 ===
+    CRGB flashColor = (t % 10 < 5) ? CRGB::Red : CRGB::Black;
+    fill_solid(leds2, NUM_LEDS, flashColor);
+
+    FastLED.show();
+    delay(50);
+  }
+}
+
+
+// void rainbowAnimation(CRGB* ledsArray) {
+//   for (int t = 0; t < 60; t++) {  // ~3 seconds at 50ms/frame
+//     uint8_t baseHue = t * 8;      // Rapid hue shifting
+
+//     // Fill rainbow pattern
+//     fill_rainbow(ledsArray, NUM_LEDS, baseHue, 10);
+
+//     // Add sparkle/flicker effect
+//     for (int i = 0; i < NUM_LEDS; i++) {
+//       if (random8() < 40) { // ~15% chance to sparkle
+//         ledsArray[i] = CHSV(random8(), 255, 255); // Random color sparkle
+//       } else {
+//         ledsArray[i].fadeToBlackBy(random8(10, 40)); // Random dimming for flicker
+//       }
+//     }
+
+//     FastLED.show();
+//     delay(50); // Faster for more excitement
+//   }
+// }
+
+
+
+// void redFlashAnimation(CRGB* ledsArray) {
+//   for (int t = 0; t < 10; t++) { // Flash red 10 times over 5 seconds
+//     fill_solid(ledsArray, NUM_LEDS, t % 2 == 0 ? CRGB::Red : CRGB::Black);
+//     FastLED.show();
+//     delay(500);
+//   }
+// }
+
